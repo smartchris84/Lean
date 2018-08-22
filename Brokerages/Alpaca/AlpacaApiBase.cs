@@ -712,38 +712,47 @@ namespace QuantConnect.Brokerages.Alpaca
 
 			List<Markets.IHistoricalQuote> bars = new List<Markets.IHistoricalQuote>();
 			DateTime startTime = startTimeUtc;
+            long offsets = 0;
 
 			while (true)
 			{
-                Console.WriteLine("{0} {1}", symbol.Value, startTime);
+                Console.WriteLine("{0} {1}", symbol.Value, DateTimeHelper.FromUnixTimeMilliseconds(offsets));
                 try
                 {
-                    var newBars = restClient.ListHistoricalQuotesAsync(symbol.Value, startTime).Result;
+                    var newBars = restClient.ListHistoricalQuotesAsync(symbol.Value, startTime, offsets).Result;
                     var asList = newBars.Items.ToList();
-                    if (startTime == DateTimeHelper.FromUnixTimeMilliseconds(asList.Last().TimeOffset))
-                        break;
                     bars.AddRange(asList);
-                    startTime = DateTimeHelper.FromUnixTimeMilliseconds(asList.Last().TimeOffset);
+                    offsets = asList.Last().TimeOffset;
                 }
                 catch (Exception e)
                 {
-                    Console.WriteLine(e.InnerException.StackTrace);
-                    throw;
+                    if (e.InnerException != null && e.InnerException.Message.Contains("ticks"))
+                    {
+                        startTime = new DateTime(startTime.Year, startTime.Month, startTime.Day);
+                        startTime = startTime.AddDays(1);
+                        offsets = 0;
+                    }
+                    else
+                        throw;
                 }
-				
+                if (startTime > endTimeUtc) break;
 			}
 
 			var bidaskList = to_larger_timeframe(bars, period);
-
-			foreach (var bidask in bidaskList)
+            foreach (var bidask in bidaskList)
 			{
 				var bidBar = bidask.First();
 				var askBar = bidask.Last();
 				var time = bidBar.Time;
-				if (time > endTimeUtc)
+                if (time < startTimeUtc)
+                    continue;
+                if (time > endTimeUtc)
 					break;
 
-				yield return new QuoteBar(
+                Console.WriteLine(bidBar.Time);
+                Console.WriteLine(bidBar.Open);
+
+                yield return new QuoteBar(
 					time.ConvertFromUtc(requestedTimeZone),
 					symbol,
 					new Bar(
@@ -838,7 +847,7 @@ namespace QuantConnect.Brokerages.Alpaca
 				Low = current_bar_low_ask,
 				Close = current_bar_close_ask
 			};
-			bars_converted.Add(new List<Markets.IBar>() { nbar1, nbar2});
+			bars_converted.Add(new List<Markets.IBar>() {nbar1, nbar2});
 			return bars_converted;
 		}
 

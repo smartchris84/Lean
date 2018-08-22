@@ -63,6 +63,7 @@ namespace QuantConnect.Tests.Brokerages.Alpaca
         {
             TestDelegate test = () =>
             {
+                System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
                 // default: Config.Get("alpaca-access-token");
                 var accountKeyId = "AKFZXJH833U18SHHDRFO";
                 // default: Config.Get("alpaca-account-id");
@@ -82,7 +83,7 @@ namespace QuantConnect.Tests.Brokerages.Alpaca
                 {
                     new HistoryRequest(now.Add(-period),
                         now,
-                        typeof(QuoteBar),
+                        typeof(TradeBar),
                         symbol,
                         resolution,
                         SecurityExchangeHours.AlwaysOpen(TimeZones.NewYork),
@@ -91,10 +92,10 @@ namespace QuantConnect.Tests.Brokerages.Alpaca
                         false,
                         false,
                         DataNormalizationMode.Adjusted,
-                        TickType.Quote)
+                        TickType.Trade)
                 };
 
-                var history = historyProvider.GetHistory(requests, TimeZones.Utc);
+                var history = brokerage.GetHistory(requests);
 
                 foreach (var slice in history)
                 {
