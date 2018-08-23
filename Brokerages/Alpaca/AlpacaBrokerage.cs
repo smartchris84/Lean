@@ -190,22 +190,41 @@ namespace QuantConnect.Brokerages.Alpaca
 			// set the starting date/time
 			var startDateTime = request.StartTimeUtc;
 
-			// loop until last date
-			while (startDateTime <= request.EndTimeUtc)
-			{
-				//request blocks of bars at the requested resolution with a starting date/ time
-				var quoteBars = _api.DownloadQuoteBars(request.Symbol, startDateTime, request.EndTimeUtc, request.Resolution, exchangeTimeZone).ToList();
-				if (quoteBars.Count == 0)
-					break;
-
-				foreach (var quoteBar in quoteBars)
-				{
-					yield return quoteBar;
-				}
-
-				// calculate the next request datetime
-				startDateTime = quoteBars[quoteBars.Count - 1].Time.ConvertToUtc(exchangeTimeZone).Add(period);
-			}
+            if (request.Resolution == Resolution.Tick)
+            {
+                var ticks = _api.DownloadTicks(request.Symbol, startDateTime, request.EndTimeUtc, exchangeTimeZone).ToList();
+                if (ticks.Count != 0)
+                {
+                    foreach (var tick in ticks)
+                    {
+                        yield return tick;
+                    }
+                }
+            }
+            else if (request.Resolution == Resolution.Second)
+            {
+                var quoteBars = _api.DownloadQuoteBars(request.Symbol, startDateTime, request.EndTimeUtc, request.Resolution, exchangeTimeZone).ToList();
+                if (quoteBars.Count != 0)
+                {
+                    foreach (var quoteBar in quoteBars)
+                    {
+                        yield return quoteBar;
+                    }
+                }
+            }
+            // Due to the slow processing time for QuoteBars in larger resolution, we change into TradeBar in these cases
+            else
+            {
+                var tradeBars = _api.DownloadTradeBars(request.Symbol, startDateTime, request.EndTimeUtc, request.Resolution, exchangeTimeZone).ToList();
+                if (tradeBars.Count != 0)
+                {
+                    tradeBars.RemoveAt(0);
+                    foreach (var tradeBar in tradeBars)
+                    {
+                        yield return tradeBar;
+                    }
+                }
+            }	
 		}
 
 		#endregion
