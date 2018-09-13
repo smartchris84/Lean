@@ -177,18 +177,7 @@ namespace QuantConnect.Brokerages.Alpaca
 		/// <returns>An enumerable of bars covering the span specified in the request</returns>
 		public override IEnumerable<BaseData> GetHistory(HistoryRequest request)
 		{
-			//if (!_symbolmapper.isknownleansymbol(request.symbol))
-			//{
-			//	log.trace("alpacabrokerage.gethistory(): invalid symbol: {0}, no history returned", request.symbol.value);
-			//	yield break;
-			//}
-
-            if (request.Resolution == Resolution.Tick)
-            {
-                Log.Trace("AlpacaBrokerage.GetHistory(): invalid resolution: tick");
-                yield break;
-            }
-
+			
 			var exchangeTimeZone = MarketHoursDatabase.FromDataFolder().GetExchangeHours(Market.USA, request.Symbol, request.Symbol.SecurityType).TimeZone;
 
 			var period = request.Resolution.ToTimeSpan();

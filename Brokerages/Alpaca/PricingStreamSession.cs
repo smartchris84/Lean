@@ -49,7 +49,7 @@ namespace QuantConnect.Brokerages.Alpaca
 
 			_runningTask = Task.Run(() =>
 			{
-				_client.Open();
+                _client.Open();
                 _client.QuoteReceived += QuoteReceived;
                 foreach (var instrument in _instruments)
                 {

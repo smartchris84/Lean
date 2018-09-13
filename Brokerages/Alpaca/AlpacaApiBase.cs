@@ -345,10 +345,6 @@ namespace QuantConnect.Brokerages.Alpaca
 		public override bool PlaceOrder(Order order)
 		{
 			const int orderFee = 0;
-			var marketOrderFillQuantity = 0;
-			var marketOrderFillPrice = 0m;
-			var marketOrderRemainingQuantity = 0;
-			var marketOrderStatus = Orders.OrderStatus.Filled;
 			order.PriceCurrency = "USD";
 
 			lock (Locker)
@@ -365,37 +361,9 @@ namespace QuantConnect.Brokerages.Alpaca
                     if (e.InnerException != null) Log.Trace(e.InnerException.Message);
                     return false;
                 }
-
-				// Market orders are special, due to the callback not being triggered always,
-				// if the order was Filled/PartiallyFilled, find fill quantity and price and inform the user
-				if (order.Type == Orders.OrderType.Market)
-				{
-                    marketOrderFillQuantity = Convert.ToInt32(apOrder.FilledQuantity);
-
-                    marketOrderFillPrice = 0;
-                    if (marketOrderFillQuantity != 0) marketOrderFillPrice = apOrder.AverageFillPrice.Value;
-                                        
-					marketOrderRemainingQuantity = Convert.ToInt32(order.AbsoluteQuantity - Math.Abs(marketOrderFillQuantity));
-					if (marketOrderRemainingQuantity > 0)
-					{
-						marketOrderStatus = Orders.OrderStatus.PartiallyFilled;
-						// The order was not fully filled lets save it so the callback can inform the user
-						PendingFilledMarketOrders[order.Id] = marketOrderStatus;
-					}
-				}
+                
 			}
 			OnOrderEvent(new OrderEvent(order, DateTime.UtcNow, orderFee) { Status = Orders.OrderStatus.Submitted });
-
-			// If 'marketOrderRemainingQuantity < order.AbsoluteQuantity' is false it means the order was not even PartiallyFilled, wait for callback
-			if (order.Type == Orders.OrderType.Market && marketOrderRemainingQuantity < order.AbsoluteQuantity)
-			{
-				OnOrderEvent(new OrderEvent(order, DateTime.UtcNow, orderFee, "Alpaca Fill Event")
-				{
-					Status = marketOrderStatus,
-					FillPrice = marketOrderFillPrice,
-					FillQuantity = marketOrderFillQuantity
-				});
-			}
 
 			return true;
 		}
@@ -410,6 +378,7 @@ namespace QuantConnect.Brokerages.Alpaca
 			Markets.OrderType type;
 			decimal? limitPrice = null;
 			decimal? stopPrice = null;
+            var timeInForce = Markets.TimeInForce.Gtc;
 
 			switch (order.Type)
 			{
@@ -432,10 +401,16 @@ namespace QuantConnect.Brokerages.Alpaca
 					stopPrice = ((StopLimitOrder)order).StopPrice;
 					limitPrice = ((StopLimitOrder)order).LimitPrice;
 					break;
+
+                case Orders.OrderType.MarketOnOpen:
+                    type = Markets.OrderType.Market;
+                    timeInForce = Markets.TimeInForce.Opg;
+                    break;
+
 				default:
 					throw new NotSupportedException("The order type " + order.Type + " is not supported.");
 			}
-			var apOrder = restClient.PostOrderAsync(order.Symbol.Value, quantity, side, type, Markets.TimeInForce.Gtc,
+			var apOrder = restClient.PostOrderAsync(order.Symbol.Value, quantity, side, type, timeInForce,
 				limitPrice, stopPrice).Result;
 
 			return apOrder;
@@ -469,7 +444,6 @@ namespace QuantConnect.Brokerages.Alpaca
 			foreach (var orderId in order.BrokerId)
 			{
 				var res = restClient.DeleteOrderAsync(new Guid(orderId)).Result;
-				OnOrderEvent(new OrderEvent(order, DateTime.UtcNow, 0, "Alpaca Cancel Order Event") { Status = Orders.OrderStatus.CancelPending });
 			}
 
 			return true;
@@ -512,24 +486,19 @@ namespace QuantConnect.Brokerages.Alpaca
 			if (order != null)
 			{
 				Orders.OrderStatus status;
-                // Market orders are special: if the order was not in 'PartiallyFilledMarketOrders', means
-                // we already sent the fill event with OrderStatus.Filled, else it means we already informed the user
-                // of a partiall fill, or didn't inform the user, so we need to do it now
-                if (tradeEvent == "FILL")
+                
+                if (tradeEvent == "FILL" || tradeEvent == "PARTIAL_FILL")
                 {
-                    if (order.Type != Orders.OrderType.Market || PendingFilledMarketOrders.TryRemove(order.Id, out status))
+                    order.PriceCurrency = SecurityProvider.GetSecurity(order.Symbol).SymbolProperties.QuoteCurrency;
+
+                    status = Orders.OrderStatus.Filled;
+                    if (trade.Order.FilledQuantity < trade.Order.Quantity) status = Orders.OrderStatus.PartiallyFilled;
+                    OnOrderEvent(new OrderEvent(order, DateTime.UtcNow, 0, "Alpaca Fill Event")
                     {
-                        order.PriceCurrency = SecurityProvider.GetSecurity(order.Symbol).SymbolProperties.QuoteCurrency;
-                        
-                        status = Orders.OrderStatus.Filled;
-                        if (trade.Order.FilledQuantity < trade.Order.Quantity) status = Orders.OrderStatus.PartiallyFilled;
-                        OnOrderEvent(new OrderEvent(order, DateTime.UtcNow, 0, "Alpaca Fill Event")
-                        {
-                            Status = status,
-                            FillPrice = trade.Price.Value,
-                            FillQuantity = Convert.ToInt32(trade.Order.Quantity)
-                        });
-                    }
+                        Status = status,
+                        FillPrice = trade.Price.Value,
+                        FillQuantity = Convert.ToInt32(trade.Order.Quantity)
+                    });
                 }
                 else if (tradeEvent == "CANCELED")
                 {
@@ -553,9 +522,9 @@ namespace QuantConnect.Brokerages.Alpaca
 		public void StartPricingStream(List<string> instruments)
 		{
             Log.Trace("Start Pricing Stream");
-			_ratesSession = new PricingStreamSession(this, instruments);
-			_ratesSession.QuoteReceived += new Action<Markets.IStreamQuote>(OnPricingDataReceived);
-			_ratesSession.StartSession();
+            _ratesSession = new PricingStreamSession(this, instruments);
+            _ratesSession.QuoteReceived += new Action<Markets.IStreamQuote>(OnPricingDataReceived);
+            _ratesSession.StartSession();
 		}
 
 		/// <summary>
@@ -563,7 +532,7 @@ namespace QuantConnect.Brokerages.Alpaca
 		/// </summary>
 		public void StopPricingStream()
 		{
-			if (_ratesSession != null)
+            if (_ratesSession != null)
 			{
                 Log.Trace("End Pricing Stream");
 				_ratesSession.StopSession();
@@ -591,7 +560,10 @@ namespace QuantConnect.Brokerages.Alpaca
 
 			var bidPrice = quote.BidPrice;
 			var askPrice = quote.AskPrice;
-			var tick = new Tick(time, symbol, bidPrice, askPrice);
+			var tick = new Tick(time, symbol, bidPrice, bidPrice, askPrice);
+            tick.TickType = TickType.Quote;
+            tick.BidSize = quote.BidSize;
+            tick.AskSize = quote.AskSize;
 			lock (Ticks)
 			{
 				Ticks.Add(tick);
@@ -1011,8 +983,9 @@ namespace QuantConnect.Brokerages.Alpaca
 			// ignore unsupported security types
 			if (symbol.ID.SecurityType != SecurityType.Equity)
 				return false;
-
-			return true;
+            if (symbol.Value.ToLower().IndexOf("universe") != -1)
+                return false;
+            return true;
 		}
 
 		/// <summary>
