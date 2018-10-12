@@ -28,7 +28,7 @@ using QuantConnect.Securities;
 
 namespace QuantConnect.Tests.Brokerages.Alpaca
 {
-    [TestFixture]
+    [TestFixture, Ignore("This test requires a configured and testable Alpaca practice account")]
     public partial class AlpacaBrokerageTests : BrokerageTests
     {
         /// <summary>
